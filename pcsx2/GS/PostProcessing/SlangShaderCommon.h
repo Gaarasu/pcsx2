@@ -31,10 +31,23 @@
 #define LIBRA_RUNTIME_METAL 1
 #endif
 
-// The Vulkan/OpenGL runtime declarations below need vulkan.h/GL types to be
-// visible first; pull in what PCSX2 already uses for each API.
+// The Vulkan/OpenGL runtime declarations below need vulkan.h/GL types to be visible first.
+//
+// Vulkan is routed through PCSX2's own VKLoader.h rather than a raw #include "vulkan/vulkan.h":
+// PCSX2 suppresses vulkan.h's real function prototypes project-wide (VK_NO_PROTOTYPES) because it
+// loads every entry point itself as a function pointer with the same name (VKEntryPoints.inl), and
+// on Windows it also needs VK_USE_PLATFORM_WIN32_KHR defined (plus its own windows.h replacement,
+// common/RedtapeWindows.h, included first) to expose the Win32 surface functions. vulkan.h/
+// vulkan_core.h are include-guarded, so whichever header reaches them *first* in a given
+// translation unit decides these macros for the *whole* TU - a raw, unguarded include here would
+// "win" that race in any TU where this header happens to be included before VKLoader.h (e.g.
+// GSDeviceVK.cpp, which includes this header alphabetically before its own GSDeviceVK.h), silently
+// disabling VK_NO_PROTOTYPES/VK_USE_PLATFORM_WIN32_KHR for the rest of that TU and breaking the
+// build with "redefinition" and "missing type specifier" errors on every Vulkan entry point.
+// Including VKLoader.h here instead guarantees the correct macros are always set before vulkan.h
+// is ever processed, regardless of include order.
 #if defined(LIBRA_RUNTIME_VULKAN)
-#include "vulkan/vulkan.h"
+#include "GS/Renderers/Vulkan/VKLoader.h"
 #endif
 #if defined(LIBRA_RUNTIME_OPENGL)
 #include "glad/gl.h"
