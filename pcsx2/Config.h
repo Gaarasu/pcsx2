@@ -838,7 +838,10 @@ struct Pcsx2Config
 					EnableAudioCapture : 1,
 					EnableAudioCaptureParameters : 1,
 					OrganizeSnapshotsByGame : 1,
-					OrganizeVideoCaptureByGame : 1;
+					OrganizeVideoCaptureByGame : 1,
+					SlangShaderDownsampleInput : 1,
+					SlangShaderStretchToWindow : 1,
+					SlangShaderInScreenshots : 1;
 			};
 		};
 
@@ -932,6 +935,8 @@ struct Pcsx2Config
 		std::string Adapter;
 		std::string HWDumpDirectory;
 		std::string SWDumpDirectory;
+		std::string SlangShaderPreset;     // .slangp path, absolute or relative to EmuFolders::Shaders; empty = disabled
+		std::string SlangShaderParameters; // "name=value;name=value" runtime parameter overrides
 
 		GSOptions();
 
@@ -1461,6 +1466,7 @@ namespace EmuFolders
 	extern std::string Covers;
 	extern std::string GameSettings;
 	extern std::string Textures;
+	extern std::string Shaders;
 	extern std::string InputProfiles;
 	extern std::string Videos;
 	extern std::string DebuggerLayouts;

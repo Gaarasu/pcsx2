@@ -167,6 +167,7 @@ namespace EmuFolders
 	std::string Covers;
 	std::string GameSettings;
 	std::string Textures;
+	std::string Shaders;
 	std::string InputProfiles;
 	std::string Videos;
 
@@ -894,6 +895,9 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 
 		OpEqu(Adapter) &&
 
+		OpEqu(SlangShaderPreset) &&
+		OpEqu(SlangShaderParameters) &&
+
 		OpEqu(HWDumpDirectory) &&
 		OpEqu(SWDumpDirectory));
 }
@@ -1031,6 +1035,9 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(VideoCaptureAutoResolution);
 	SettingsWrapBitBool(EnableAudioCapture);
 	SettingsWrapBitBool(EnableAudioCaptureParameters);
+	SettingsWrapBitBool(SlangShaderDownsampleInput);
+	SettingsWrapBitBool(SlangShaderStretchToWindow);
+	SettingsWrapBitBool(SlangShaderInScreenshots);
 
 	SettingsWrapIntEnumEx(LinearPresent, "linear_present_mode");
 	SettingsWrapIntEnumEx(InterlaceMode, "deinterlace_mode");
@@ -1105,6 +1112,10 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitfieldEx(AudioCaptureBitrate, "AudioCaptureBitrate");
 
 	SettingsWrapEntry(Adapter);
+	// Preset path resolution (absolute vs. relative to EmuFolders::Shaders) is deferred to
+	// SlangShaderChain::Create() so that the stored path stays portable across machines/installs.
+	SettingsWrapEntry(SlangShaderPreset);
+	SettingsWrapEntry(SlangShaderParameters);
 	SettingsWrapEntry(HWDumpDirectory);
 	if (!HWDumpDirectory.empty() && !Path::IsAbsolute(HWDumpDirectory))
 		HWDumpDirectory = Path::Combine(EmuFolders::DataRoot, HWDumpDirectory);
@@ -2292,6 +2303,7 @@ void EmuFolders::SetDefaults(SettingsInterface& si)
 	si.SetStringValue("Folders", "UserResources", "resources");
 	si.SetStringValue("Folders", "Cache", "cache");
 	si.SetStringValue("Folders", "Textures", "textures");
+	si.SetStringValue("Folders", "Shaders", "shaders");
 	si.SetStringValue("Folders", "InputProfiles", "inputprofiles");
 	si.SetStringValue("Folders", "Videos", "videos");
 	si.SetStringValue("Folders", "DebuggerLayouts", "debuggerlayouts");
@@ -2320,6 +2332,7 @@ void EmuFolders::LoadConfig(SettingsInterface& si)
 	UserResources = LoadPathFromSettings(si, DataRoot, "UserResources", "resources");
 	Cache = LoadPathFromSettings(si, DataRoot, "Cache", "cache");
 	Textures = LoadPathFromSettings(si, DataRoot, "Textures", "textures");
+	Shaders = LoadPathFromSettings(si, DataRoot, "Shaders", "shaders");
 	InputProfiles = LoadPathFromSettings(si, DataRoot, "InputProfiles", "inputprofiles");
 	Videos = LoadPathFromSettings(si, DataRoot, "Videos", "videos");
 	DebuggerLayouts = LoadPathFromSettings(si, Settings, "DebuggerLayouts", "debuggerlayouts");
@@ -2338,6 +2351,7 @@ void EmuFolders::LoadConfig(SettingsInterface& si)
 	Console.WriteLn("User Resources Directory: %s", UserResources.c_str());
 	Console.WriteLn("Cache Directory: %s", Cache.c_str());
 	Console.WriteLn("Textures Directory: %s", Textures.c_str());
+	Console.WriteLn("Shaders Directory: %s", Shaders.c_str());
 	Console.WriteLn("Input Profile Directory: %s", InputProfiles.c_str());
 	Console.WriteLn("Video Dumping Directory: %s", Videos.c_str());
 	Console.WriteLn("Debugger Layouts Directory: %s", DebuggerLayouts.c_str());
@@ -2359,6 +2373,7 @@ bool EmuFolders::EnsureFoldersExist()
 	result = FileSystem::CreateDirectoryPath(UserResources.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Cache.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Textures.c_str(), false) && result;
+	result = FileSystem::CreateDirectoryPath(Shaders.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(InputProfiles.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Videos.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(DebuggerLayouts.c_str(), false) && result;
