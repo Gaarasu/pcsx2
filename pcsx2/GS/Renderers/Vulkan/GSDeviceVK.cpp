@@ -4,7 +4,9 @@
 #include "GS/GS.h"
 #include "GS/GSGL.h"
 #include "GS/GSPerfMon.h"
+#include "GS/GSShaderCompileIndicator.h"
 #include "GS/GSUtil.h"
+#include "GS/PostProcessing/SlangShaderCommon.h"
 #include "GS/Renderers/Vulkan/GSDeviceVK.h"
 #include "GS/Renderers/Vulkan/VKBuilders.h"
 #include "GS/Renderers/Vulkan/VKShaderCache.h"
@@ -3373,6 +3375,111 @@ void GSDeviceVK::FilteredDownsampleTexture(GSTexture* sTex, GSTexture* dTex, u32
 	//const GSVector4 dRect = GSVector4(dTex->GetRect());
 	DoStretchRect(static_cast<GSTextureVK*>(sTex), GSVector4::zero(), static_cast<GSTextureVK*>(dTex), dRect,
 		GetConvertPipeline(shader), Nearest, true);
+}
+
+bool GSDeviceVK::CreateSlangFilterChain(void* preset, void** out_chain, Error* error)
+{
+	// Mega Bezel-class presets warm up 30+ pipelines on creation; let the OSD "compiling shaders"
+	// indicator account for that time the same way shader cache misses do elsewhere.
+	const GSShaderCompileIndicator::CompileTimer compile_timer;
+
+	const libra_device_vk_t vk_dev = {
+		GetPhysicalDevice(), GetVulkanInstance(), GetDevice(), GetGraphicsQueue(), vkGetInstanceProcAddr};
+
+	filter_chain_vk_opt_t opts = {};
+	opts.version = LIBRASHADER_CURRENT_VERSION;
+	opts.frames_in_flight = NUM_COMMAND_BUFFERS;
+	// PCSX2 has classic render-pass plumbing today; librashader will create and manage its own
+	// VkRenderPass objects for the chain's passes. Revisit as an optimization later.
+	opts.use_dynamic_rendering = false;
+	opts.disable_cache = GSConfig.DisableShaderCache;
+
+	// Deferred: records pipeline warm-up into PCSX2's own current command buffer, rather than
+	// allocating and submitting a throwaway one of its own.
+	libra_vk_filter_chain_t chain = nullptr;
+	if (libra_error_t err = SlangShader::GetInstance().vk_filter_chain_create_deferred(
+			reinterpret_cast<libra_shader_preset_t*>(&preset), vk_dev, GetCurrentCommandBuffer(), &opts, &chain))
+	{
+		SlangShader::ConsumeError(err, error);
+		return false;
+	}
+
+	*out_chain = chain;
+	return true;
+}
+
+bool GSDeviceVK::DoSlangFilterChainFrame(void* chain, u64 frame_count, GSTexture* sTex, GSTexture* dTex,
+	const GSVector4i& viewport, const SlangFrameOptions& options)
+{
+	// librashader records its own render pass(es); make sure ours is closed first.
+	EndRenderPass();
+
+	GSTextureVK* const sTexVK = static_cast<GSTextureVK*>(sTex);
+	GSTextureVK* const dTexVK = static_cast<GSTextureVK*>(dTex);
+	VkCommandBuffer cmdbuf = GetCurrentCommandBuffer();
+
+	sTexVK->TransitionToLayout(cmdbuf, GSTextureVK::Layout::ShaderReadOnly);
+	dTexVK->TransitionToLayout(cmdbuf, GSTextureVK::Layout::ColorAttachment);
+
+	const libra_image_vk_t in_image = {sTexVK->GetImage(), sTexVK->GetVkFormat(),
+		static_cast<u32>(sTexVK->GetWidth()), static_cast<u32>(sTexVK->GetHeight())};
+	const libra_image_vk_t out_image = {dTexVK->GetImage(), dTexVK->GetVkFormat(),
+		static_cast<u32>(dTexVK->GetWidth()), static_cast<u32>(dTexVK->GetHeight())};
+	const libra_viewport_t vp = {static_cast<float>(viewport.x), static_cast<float>(viewport.y),
+		static_cast<u32>(viewport.width()), static_cast<u32>(viewport.height())};
+
+	frame_vk_opt_t frame_opts = {};
+	frame_opts.version = LIBRASHADER_CURRENT_VERSION;
+	frame_opts.clear_history = options.clear_history;
+	frame_opts.frame_direction = options.frame_direction;
+	frame_opts.rotation = options.rotation;
+	frame_opts.total_subframes = 1;
+	frame_opts.current_subframe = 1;
+	frame_opts.aspect_ratio = options.aspect_ratio;
+	frame_opts.frames_per_second = options.frames_per_second;
+
+	// Every librashader chain accessor besides _create takes the handle by pointer.
+	libra_vk_filter_chain_t c = static_cast<libra_vk_filter_chain_t>(chain);
+	const libra_error_t err = SlangShader::GetInstance().vk_filter_chain_frame(
+		&c, cmdbuf, frame_count, in_image, out_image, &vp, nullptr, &frame_opts);
+
+	// librashader has just recorded its own render passes, pipeline binds, and descriptor set
+	// updates into our command buffer; our cached pipeline/descriptor-set/framebuffer state no
+	// longer reflects what's actually bound.
+	InvalidateCachedState();
+
+	if (err)
+	{
+		Error error;
+		SlangShader::ConsumeError(err, &error);
+		Console.Error("VK: Slang shader frame failed: %s", error.GetDescription().c_str());
+		return false;
+	}
+
+	return true;
+}
+
+bool GSDeviceVK::SetSlangFilterChainParam(void* chain, const char* name, float value)
+{
+	libra_vk_filter_chain_t c = static_cast<libra_vk_filter_chain_t>(chain);
+	if (libra_error_t err = SlangShader::GetInstance().vk_filter_chain_set_param(&c, name, value))
+	{
+		SlangShader::ConsumeError(err, nullptr);
+		return false;
+	}
+
+	return true;
+}
+
+void GSDeviceVK::DestroySlangFilterChain(void* chain)
+{
+	// The chain's resources may still be referenced by work the GPU hasn't finished yet (the
+	// frames-in-flight ring is shared with the rest of the device); wait for it to go idle before
+	// freeing anything, same as the device's own Destroy()/DestroySurface() paths do.
+	WaitForGPUIdle();
+
+	libra_vk_filter_chain_t c = static_cast<libra_vk_filter_chain_t>(chain);
+	SlangShader::GetInstance().vk_filter_chain_free(&c);
 }
 
 void GSDeviceVK::DoMerge(GSTexture* sTex[3], GSVector4* sRect, GSTexture* dTex, GSVector4* dRect,
