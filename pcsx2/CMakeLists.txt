@@ -499,6 +499,7 @@ set(pcsx2GSSources
 	GS/GSUtil.cpp
 	GS/GSVector.cpp
 	GS/MultiISA.cpp
+	GS/PostProcessing/SlangShaderChain.cpp
 	GS/Renderers/Common/GSDevice.cpp
 	GS/Renderers/Common/GSDirtyRect.cpp
 	GS/Renderers/Common/GSFunctionMap.cpp
@@ -539,6 +540,8 @@ set(pcsx2GSHeaders
 	GS/GSVector.h
 	GS/GSXXH.h
 	GS/MultiISA.h
+	GS/PostProcessing/SlangShaderChain.h
+	GS/PostProcessing/SlangShaderCommon.h
 	GS/Renderers/Common/GSDevice.h
 	GS/Renderers/Common/GSDirtyRect.h
 	GS/Renderers/Common/GSFastList.h

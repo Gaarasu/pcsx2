@@ -193,6 +193,9 @@
     <Filter Include="System\Ps2\GS\Renderers\Common">
       <UniqueIdentifier>{81af12a1-9605-4dd8-a70e-fd4ae81fbdd5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="System\Ps2\GS\PostProcessing">
+      <UniqueIdentifier>{2a6b4e3f-2c8a-4a91-9d3e-7f4b1c9e5a02}</UniqueIdentifier>
+    </Filter>
     <Filter Include="System\Ps2\GS\Window">
       <UniqueIdentifier>{eaa22029-6839-4c09-93e1-faea8d8c0d7c}</UniqueIdentifier>
     </Filter>
@@ -1078,6 +1081,9 @@
     </ClCompile>
     <ClCompile Include="GS\Renderers\Common\GSDevice.cpp">
       <Filter>System\Ps2\GS\Renderers\Common</Filter>
+    </ClCompile>
+    <ClCompile Include="GS\PostProcessing\SlangShaderChain.cpp">
+      <Filter>System\Ps2\GS\PostProcessing</Filter>
     </ClCompile>
     <ClCompile Include="GS\Renderers\Common\GSTexture.cpp">
       <Filter>System\Ps2\GS\Renderers\Common</Filter>
@@ -2029,6 +2035,12 @@
     </ClInclude>
     <ClInclude Include="GS\Renderers\Common\GSShaderEnums.h">
       <Filter>System\Ps2\GS\Renderers\Common</Filter>
+    </ClInclude>
+    <ClInclude Include="GS\PostProcessing\SlangShaderChain.h">
+      <Filter>System\Ps2\GS\PostProcessing</Filter>
+    </ClInclude>
+    <ClInclude Include="GS\PostProcessing\SlangShaderCommon.h">
+      <Filter>System\Ps2\GS\PostProcessing</Filter>
     </ClInclude>
     <ClInclude Include="GS\Renderers\Common\GSTexture.h">
       <Filter>System\Ps2\GS\Renderers\Common</Filter>

@@ -89,6 +89,19 @@ enum class SetDATM : u8
 	DATM1_RTA_CORRECTION
 };
 
+class Error;
+
+/// Frame options forwarded to librashader's frame_*_opt_t (the backend fills in the
+/// version/color_space/subframe fields itself; PCSX2 has no rewind or subframe presentation).
+struct SlangFrameOptions
+{
+	float aspect_ratio; ///< GetCurrentAspectRatioFloat()
+	float frames_per_second; ///< GSRenderer::GetTvRefreshRate()
+	s32 frame_direction; ///< Always 1 (no rewind support).
+	u32 rotation; ///< Always 0 (PS2 output is never rotated).
+	bool clear_history; ///< True on the first frame after chain creation.
+};
+
 enum class ShaderInterlace
 {
 	WEAVE = 0,
@@ -1692,6 +1705,16 @@ public:
 
 	/// Uses box downsampling to resize a texture.
 	virtual void FilteredDownsampleTexture(GSTexture* sTex, GSTexture* dTex, u32 downsample_factor, const GSVector2i& clamp_min, const GSVector4& dRect) = 0;
+
+	/// librashader (slang shader preset) support. `preset` is a libra_shader_preset_t handle
+	/// (type-erased as void* so librashader's headers don't need to be visible here); a successful
+	/// create consumes/invalidates it, matching librashader's own ownership semantics. The base
+	/// implementations below are the default: this renderer does not support slang shaders yet.
+	virtual bool CreateSlangFilterChain(void* preset, void** out_chain, Error* error);
+	virtual bool DoSlangFilterChainFrame(void* chain, u64 frame_count, GSTexture* sTex, GSTexture* dTex,
+		const GSVector4i& viewport, const SlangFrameOptions& options);
+	virtual bool SetSlangFilterChainParam(void* chain, const char* name, float value);
+	virtual void DestroySlangFilterChain(void* chain);
 
 	virtual void RenderHW(GSHWDrawConfig& config) = 0;
 

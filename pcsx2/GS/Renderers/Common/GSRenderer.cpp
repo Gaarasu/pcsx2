@@ -9,6 +9,7 @@
 #include "GS/GSGL.h"
 #include "GS/GSPerfMon.h"
 #include "GS/GSUtil.h"
+#include "GS/PostProcessing/SlangShaderChain.h"
 #include "GSDumpReplayer.h"
 #include "Host.h"
 #include "PerformanceMetrics.h"
@@ -252,7 +253,10 @@ bool GSRenderer::Merge(int field)
 		g_gs_device->FXAA();
 
 	// Sharpens biinear at lower resolutions, almost nearest but with more uniform pixels.
-	if (GSConfig.LinearPresent == GSPostBilinearMode::BilinearSharp && (g_gs_device->GetWindowWidth() > fs.x || g_gs_device->GetWindowHeight() > fs.y))
+	// Skipped when a slang shader chain is active: it renders into its own window-sized target,
+	// so pre-scaling here would just be double work (and would fight the chain's own scaling).
+	if (GSConfig.LinearPresent == GSPostBilinearMode::BilinearSharp && !g_slang_shader_chain &&
+		(g_gs_device->GetWindowWidth() > fs.x || g_gs_device->GetWindowHeight() > fs.y))
 	{
 		g_gs_device->Resize(g_gs_device->GetWindowWidth(), g_gs_device->GetWindowHeight());
 	}
@@ -657,6 +661,7 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		GSVector4i src_rect;
 		GSVector4 src_uv, draw_rect;
 		GSTexture* current = g_gs_device->GetCurrent();
+		bool slang_shader_applied = false;
 		if (current && !blank_frame)
 		{
 			src_rect = CalculateDrawSrcRect(current, m_real_size);
@@ -685,6 +690,28 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 					cas_log_once = true;
 				}
 			}
+
+			if (g_slang_shader_chain)
+			{
+				// Recompute the destination rect without the GL lower-left flip: the chain
+				// letterboxes internally in top-left-origin window space, and any flip needed
+				// for presentation is (re-)applied below, once, at present time.
+				const GSVector4 chain_rect = CalculateDrawDstRect(g_gs_device->GetWindowWidth(),
+					g_gs_device->GetWindowHeight(), src_rect, current->GetSize(), s_display_alignment,
+					false, GetVideoMode() == GSVideoMode::SDTV_480P);
+				if (GSTexture* shaded = g_slang_shader_chain->Apply(current, g_gs_device->GetWindowSize(),
+						GSVector4i(chain_rect), GetCurrentAspectRatioFloat(GetVideoMode() == GSVideoMode::SDTV_480P),
+						GetTvRefreshRate(), true))
+				{
+					current = shaded;
+					slang_shader_applied = true;
+					src_uv = GSVector4(0.0f, 0.0f, 1.0f, 1.0f);
+					draw_rect = GSVector4(0.0f, 0.0f, static_cast<float>(g_gs_device->GetWindowWidth()),
+						static_cast<float>(g_gs_device->GetWindowHeight()));
+					if (g_gs_device->UsesLowerLeftOrigin())
+						src_uv = GSVector4(src_uv.x, src_uv.w, src_uv.z, src_uv.y); // flip at present
+				}
+			}
 		}
 
 		if (BeginPresentFrame(false))
@@ -694,8 +721,12 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 				const u64 current_time = Common::Timer::GetCurrentValue();
 				const float shader_time = static_cast<float>(Common::Timer::ConvertValueToSeconds(current_time - m_shader_time_start));
 
+				// When a slang shader chain produced output, it is already window-sized and
+				// fully composed - present it verbatim rather than applying a TV shader or
+				// bilinear filtering a second time.
 				g_gs_device->PresentRect(current, src_uv, nullptr, draw_rect,
-					s_tv_shader_indices[GSConfig.TVShader], shader_time, BilnIf(GSConfig.LinearPresent != GSPostBilinearMode::Off));
+					slang_shader_applied ? PresentShader::COPY : s_tv_shader_indices[GSConfig.TVShader], shader_time,
+					slang_shader_applied ? Nearest : BilnIf(GSConfig.LinearPresent != GSPostBilinearMode::Off));
 			}
 
 			EndPresentFrame();
@@ -963,17 +994,40 @@ void GSRenderer::PresentCurrentFrame()
 		if (current)
 		{
 			const GSVector4i src_rect(CalculateDrawSrcRect(current, m_real_size));
-			const GSVector4 src_uv(GSVector4(src_rect) / GSVector4(current->GetSize()).xyxy());
-			const GSVector4 draw_rect(CalculateDrawDstRect(g_gs_device->GetWindowWidth(), g_gs_device->GetWindowHeight(),
+			GSVector4 src_uv(GSVector4(src_rect) / GSVector4(current->GetSize()).xyxy());
+			GSVector4 draw_rect(CalculateDrawDstRect(g_gs_device->GetWindowWidth(), g_gs_device->GetWindowHeight(),
 				src_rect, current->GetSize(), s_display_alignment, g_gs_device->UsesLowerLeftOrigin(),
 				GetVideoMode() == GSVideoMode::SDTV_480P));
 			s_last_draw_rect = draw_rect;
+
+			bool slang_shader_applied = false;
+			if (g_slang_shader_chain)
+			{
+				// Same top-left-origin recompute as VSync(); advance_frame=false so a redraw
+				// (e.g. from a window event) doesn't perturb feedback-preset frame history.
+				const GSVector4 chain_rect = CalculateDrawDstRect(g_gs_device->GetWindowWidth(),
+					g_gs_device->GetWindowHeight(), src_rect, current->GetSize(), s_display_alignment,
+					false, GetVideoMode() == GSVideoMode::SDTV_480P);
+				if (GSTexture* shaded = g_slang_shader_chain->Apply(current, g_gs_device->GetWindowSize(),
+						GSVector4i(chain_rect), GetCurrentAspectRatioFloat(GetVideoMode() == GSVideoMode::SDTV_480P),
+						GetTvRefreshRate(), false))
+				{
+					current = shaded;
+					slang_shader_applied = true;
+					src_uv = GSVector4(0.0f, 0.0f, 1.0f, 1.0f);
+					draw_rect = GSVector4(0.0f, 0.0f, static_cast<float>(g_gs_device->GetWindowWidth()),
+						static_cast<float>(g_gs_device->GetWindowHeight()));
+					if (g_gs_device->UsesLowerLeftOrigin())
+						src_uv = GSVector4(src_uv.x, src_uv.w, src_uv.z, src_uv.y);
+				}
+			}
 
 			const u64 current_time = Common::Timer::GetCurrentValue();
 			const float shader_time = static_cast<float>(Common::Timer::ConvertValueToSeconds(current_time - m_shader_time_start));
 
 			g_gs_device->PresentRect(current, src_uv, nullptr, draw_rect,
-				s_tv_shader_indices[GSConfig.TVShader], shader_time, BilnIf(GSConfig.LinearPresent != GSPostBilinearMode::Off));
+				slang_shader_applied ? PresentShader::COPY : s_tv_shader_indices[GSConfig.TVShader], shader_time,
+				slang_shader_applied ? Nearest : BilnIf(GSConfig.LinearPresent != GSPostBilinearMode::Off));
 		}
 
 		EndPresentFrame();

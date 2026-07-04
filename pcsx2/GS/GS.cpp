@@ -13,6 +13,7 @@
 #include "GS/GSPerfMon.h"
 #include "GS/GSUtil.h"
 #include "GS/MultiISA.h"
+#include "GS/PostProcessing/SlangShaderChain.h"
 #include "Host.h"
 #include "Input/InputManager.h"
 #include "MTGS.h"
@@ -43,6 +44,7 @@
 #endif
 
 #include "common/Console.h"
+#include "common/Error.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
 #include "common/SmallString.h"
@@ -103,6 +105,8 @@ static RenderAPI GetAPIForRenderer(GSRendererType renderer)
 			return GetAPIForRenderer(GSUtil::GetPreferredRenderer());
 	}
 }
+
+static void UpdateSlangShaderChain();
 
 static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool recreate_window,
 	GSVSyncMode vsync_mode, bool allow_present_throttle)
@@ -169,6 +173,8 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool
 	Console.WriteLn(Color_StrongGreen, "%s Graphics Driver Info:", GSDevice::RenderAPIToString(new_api));
 	Console.WriteLn(g_gs_device->GetDriverInfo());
 
+	UpdateSlangShaderChain();
+
 	return true;
 }
 
@@ -177,9 +183,44 @@ static void CloseGSDevice(bool clear_state)
 	if (!g_gs_device)
 		return;
 
+	// The chain handle is backend-specific, so it must be torn down while the device (and, on
+	// Vulkan/D3D12, the GPU work referencing it) is still alive.
+	if (g_slang_shader_chain)
+	{
+		g_slang_shader_chain->ReleaseDeviceResources();
+		g_slang_shader_chain.reset();
+	}
+
 	ImGuiManager::Shutdown(clear_state);
 	g_gs_device->Destroy();
 	g_gs_device.reset();
+}
+
+/// (Re)creates g_slang_shader_chain to match GSConfig.SlangShaderPreset. Called once after the GS
+/// device is (re)created, and again from GSUpdateConfig() whenever the preset path or one of its
+/// chain-affecting toggles changes. A missing/invalid preset, or (until later renderer-specific
+/// changes land) simply an unsupported renderer, surfaces a single OSD message and leaves the
+/// chain disabled - the game keeps rendering normally, unshaded.
+static void UpdateSlangShaderChain()
+{
+	if (g_slang_shader_chain)
+	{
+		g_slang_shader_chain->ReleaseDeviceResources();
+		g_slang_shader_chain.reset();
+	}
+
+	if (!g_gs_device || GSConfig.SlangShaderPreset.empty())
+		return;
+
+	Error error;
+	g_slang_shader_chain = SlangShaderChain::Create(GSConfig.SlangShaderPreset, &error);
+	if (!g_slang_shader_chain)
+	{
+		Host::AddIconOSDMessage("SlangShaderChain", ICON_FA_TRIANGLE_EXCLAMATION,
+			fmt::format(TRANSLATE_FS("GS", "Failed to load slang shader preset '{}': {}"),
+				Path::GetFileName(GSConfig.SlangShaderPreset), error.GetDescription()),
+			Host::OSD_ERROR_DURATION);
+	}
 }
 
 static void GSClampUpscaleMultiplier(Pcsx2Config::GSOptions& config)
@@ -863,6 +904,19 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 		g_gs_renderer->PurgeTextureCache(true, true, true);
 		g_gs_device->ClearCurrent();
 		g_gs_device->PurgePool();
+	}
+
+	// Slang shader preset changes (or a toggle that affects how the chain is built/fed) need a
+	// full chain rebuild; a parameter-only change can be applied live to the existing chain.
+	if (GSConfig.SlangShaderPreset != old_config.SlangShaderPreset ||
+		GSConfig.SlangShaderDownsampleInput != old_config.SlangShaderDownsampleInput ||
+		GSConfig.SlangShaderStretchToWindow != old_config.SlangShaderStretchToWindow)
+	{
+		UpdateSlangShaderChain();
+	}
+	else if (GSConfig.SlangShaderParameters != old_config.SlangShaderParameters && g_slang_shader_chain)
+	{
+		g_slang_shader_chain->ApplyParameterOverrides();
 	}
 
 	// clear out the sampler cache when AF options change, since the anisotropy gets baked into them

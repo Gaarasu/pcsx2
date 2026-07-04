@@ -9,6 +9,7 @@
 
 #include "common/Console.h"
 #include "common/BitUtils.h"
+#include "common/Error.h"
 #include "common/FileSystem.h"
 #include "common/HostSys.h"
 #include "common/Path.h"
@@ -914,6 +915,32 @@ void GSDevice::SortMultiStretchRects(MultiStretchRect* rects, u32 num_rects)
 	std::sort(rects, rects + num_rects, [](const MultiStretchRect& lhs, const MultiStretchRect& rhs) {
 		return lhs.src < rhs.src || lhs.filter < rhs.filter;
 	});
+}
+
+// Default librashader (slang shader preset) support: no backend implements this yet, so every
+// call fails cleanly and SlangShaderChain surfaces a "not supported by this renderer" OSD message
+// instead of the game silently rendering unshaded.
+bool GSDevice::CreateSlangFilterChain(void* preset, void** out_chain, Error* error)
+{
+	Console.Warning("Slang shaders are not supported by this renderer yet.");
+	Error::SetStringView(error, "Slang shaders are not supported by this renderer yet.");
+	return false;
+}
+
+bool GSDevice::DoSlangFilterChainFrame(void* chain, u64 frame_count, GSTexture* sTex, GSTexture* dTex,
+	const GSVector4i& viewport, const SlangFrameOptions& options)
+{
+	return false;
+}
+
+bool GSDevice::SetSlangFilterChainParam(void* chain, const char* name, float value)
+{
+	return false;
+}
+
+void GSDevice::DestroySlangFilterChain(void* chain)
+{
+	// No-op: the base class never creates a chain, so there is nothing to destroy.
 }
 
 void GSDevice::ClearCurrent()
