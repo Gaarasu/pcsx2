@@ -427,6 +427,18 @@ public:
 
 	void ClearSamplerCache() override;
 
+	/// Sets all cached pipeline-state shadow members (m_state) back to their "nothing bound yet"
+	/// values, forcing the next Draw() call to reissue every IA/VS/PS/OM binding rather than
+	/// skipping ones it thinks are already in effect. Needed after anything outside PCSX2's own
+	/// draw path (e.g. librashader) has made D3D11 state-setting calls behind our back.
+	void InvalidateCachedState();
+
+	bool CreateSlangFilterChain(void* preset, void** out_chain, Error* error) override;
+	bool DoSlangFilterChainFrame(void* chain, u64 frame_count, GSTexture* sTex, GSTexture* dTex,
+		const GSVector4i& viewport, const SlangFrameOptions& options) override;
+	bool SetSlangFilterChainParam(void* chain, const char* name, float value) override;
+	void DestroySlangFilterChain(void* chain) override;
+
 	ID3D11Device1* operator->() { return m_dev.get(); }
 	operator ID3D11Device1*() { return m_dev.get(); }
 	operator ID3D11DeviceContext1*() { return m_ctx.get(); }

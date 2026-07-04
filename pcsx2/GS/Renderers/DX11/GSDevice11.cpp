@@ -8,6 +8,7 @@
 #include "GS/GSExtra.h"
 #include "GS/GSPerfMon.h"
 #include "GS/GSUtil.h"
+#include "GS/PostProcessing/SlangShaderCommon.h"
 #include "Host.h"
 
 #include "common/BitUtils.h"
@@ -3414,4 +3415,92 @@ void GSDevice11::SetRenderHWShaderResources(const GSHWDrawConfig& config, GSText
 	}
 	if (primid_texture)
 		PSSetShaderResource(TEXTURE_PRIMID, primid_texture);
+}
+
+void GSDevice11::InvalidateCachedState()
+{
+	// Reset every cached pipeline-state shadow member back to its "nothing bound" value, exactly
+	// like the constructor does, so the next Draw() call reissues every IA/VS/PS/OM binding
+	// instead of skipping ones it (wrongly) thinks are already in effect on the device.
+	memset(&m_state, 0, sizeof(m_state));
+	m_state.topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	m_state.bf = -1;
+}
+
+bool GSDevice11::CreateSlangFilterChain(void* preset, void** out_chain, Error* error)
+{
+	filter_chain_d3d11_opt_t opts = {};
+	opts.version = LIBRASHADER_CURRENT_VERSION;
+	opts.disable_cache = GSConfig.DisableShaderCache;
+
+	// GS thread owns the immediate context for its whole lifetime, so a plain (non-deferred)
+	// create is correct here - there is no separate command list to warm pipelines into.
+	libra_d3d11_filter_chain_t chain = nullptr;
+	if (libra_error_t err = SlangShader::GetInstance().d3d11_filter_chain_create(
+			reinterpret_cast<libra_shader_preset_t*>(&preset), m_dev.get(), &opts, &chain))
+	{
+		SlangShader::ConsumeError(err, error);
+		return false;
+	}
+
+	*out_chain = chain;
+	return true;
+}
+
+bool GSDevice11::DoSlangFilterChainFrame(void* chain, u64 frame_count, GSTexture* sTex, GSTexture* dTex,
+	const GSVector4i& viewport, const SlangFrameOptions& options)
+{
+	const libra_viewport_t vp = {
+		static_cast<float>(viewport.x), static_cast<float>(viewport.y),
+		static_cast<u32>(viewport.width()), static_cast<u32>(viewport.height())};
+
+	frame_d3d11_opt_t frame_opts = {};
+	frame_opts.version = LIBRASHADER_CURRENT_VERSION;
+	frame_opts.clear_history = options.clear_history;
+	frame_opts.frame_direction = options.frame_direction;
+	frame_opts.rotation = options.rotation;
+	frame_opts.total_subframes = 1;
+	frame_opts.current_subframe = 1;
+	frame_opts.aspect_ratio = options.aspect_ratio;
+	frame_opts.frames_per_second = options.frames_per_second;
+
+	// libra_d3d11_filter_chain_frame() (like every other librashader chain accessor besides
+	// _create) takes the chain handle by pointer, not by value.
+	libra_d3d11_filter_chain_t c = static_cast<libra_d3d11_filter_chain_t>(chain);
+	const libra_error_t err = SlangShader::GetInstance().d3d11_filter_chain_frame(&c, m_ctx.get(), frame_count,
+		static_cast<ID3D11ShaderResourceView*>(*static_cast<GSTexture11*>(sTex)),
+		static_cast<ID3D11RenderTargetView*>(*static_cast<GSTexture11*>(dTex)),
+		&vp, nullptr, &frame_opts);
+
+	// librashader has just made its own VS/PS/IA/OM/rasterizer-state calls directly on the
+	// immediate context; our shadow copies of device state no longer reflect reality.
+	InvalidateCachedState();
+
+	if (err)
+	{
+		Error error;
+		SlangShader::ConsumeError(err, &error);
+		Console.Error("D3D11: Slang shader frame failed: %s", error.GetDescription().c_str());
+		return false;
+	}
+
+	return true;
+}
+
+bool GSDevice11::SetSlangFilterChainParam(void* chain, const char* name, float value)
+{
+	libra_d3d11_filter_chain_t c = static_cast<libra_d3d11_filter_chain_t>(chain);
+	if (libra_error_t err = SlangShader::GetInstance().d3d11_filter_chain_set_param(&c, name, value))
+	{
+		SlangShader::ConsumeError(err, nullptr);
+		return false;
+	}
+
+	return true;
+}
+
+void GSDevice11::DestroySlangFilterChain(void* chain)
+{
+	libra_d3d11_filter_chain_t c = static_cast<libra_d3d11_filter_chain_t>(chain);
+	SlangShader::GetInstance().d3d11_filter_chain_free(&c);
 }
