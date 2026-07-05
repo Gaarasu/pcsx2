@@ -264,6 +264,16 @@ GSTexture* SlangShaderChain::Apply(GSTexture* input, const GSVector2i& window_si
 		return nullptr;
 	}
 
+	// librashader just wrote the real shaded output directly into m_output's native texture/image
+	// handle, entirely bypassing GSDevice's own render-target bind path - so m_output is still
+	// marked State::Cleared from the ClearRenderTarget() call above (nothing about the backend call
+	// touches PCSX2's own texture-state tracking). If left as Cleared, the *next* time m_output is
+	// used as a source texture (PresentRect -> DoStretchRect, on every backend), CommitClear() sees
+	// State::Cleared and "resolves" it by issuing a real clear-to-black immediately before sampling,
+	// silently overwriting the shaded content that was just rendered with flat black - no error,
+	// just a solid black frame. Mark it Dirty now so that lazy-clear resolution doesn't fire.
+	m_output->SetState(GSTexture::State::Dirty);
+
 	m_first_frame = false;
 	if (advance_frame)
 		m_frame_count++;
